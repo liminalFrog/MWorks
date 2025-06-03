@@ -255,11 +255,21 @@ function CanvasEditor() {
     };
   };
 
-  // Grid snapping utility - updated for foot-based grid system
-  const snapToGrid = (value, gridSize = 48) => {
-    // Snap to foot grid by default (48 pixels = 1 foot at 100% zoom)
-    const actualGridSize = gridSize; // Base grid size independent of zoom
-    return Math.round(value / actualGridSize) * actualGridSize;
+  // Enhanced grid snapping utility with intelligent foot/inch snapping
+  const snapToGrid = (value) => {
+    const baseFeetGridSize = 48; // 1 foot = 48 pixels at 100% zoom
+    const baseInchGridSize = baseFeetGridSize / 12; // 4 pixels per inch at 100% zoom
+    
+    // Calculate actual grid sizes at current zoom level
+    const inchGridSize = baseInchGridSize * state.zoom;
+    
+    // If zoomed in enough to see inch grid clearly (>=2 pixels), snap to inches
+    if (inchGridSize >= 2) {
+      return Math.round(value / baseInchGridSize) * baseInchGridSize;
+    } else {
+      // Otherwise snap to feet
+      return Math.round(value / baseFeetGridSize) * baseFeetGridSize;
+    }
   };
 
   // Enhanced mouse event handlers with grid snapping, panning, and multi-selection
@@ -301,7 +311,7 @@ function CanvasEditor() {
       } else if (element) {
         // Single selection
         actions.selectElement(element);
-        actions.setStatusMessage(`Selected: ${element.type} (${element.width}x${element.height})`);
+        actions.setStatusMessage(`Selected: ${element.type} (${formatFeetInches(element.width)} x ${formatFeetInches(element.height)})`);
       } else {
         // Start selection box
         setIsDrawing(true);
@@ -356,10 +366,9 @@ function CanvasEditor() {
     
     if (!isDrawing || !dragStart) {
       // Show hover information
-      const element = findElementAt(snappedPos.x, snappedPos.y);
-      if (element && state.currentTool === 'select') {
-        actions.setStatusMessage(`Hover: ${element.type} (${element.width}x${element.height})`);
-      } else if (state.currentTool !== 'select') {
+      const element = findElementAt(snappedPos.x, snappedPos.y);        if (element && state.currentTool === 'select') {
+          actions.setStatusMessage(`Hover: ${element.type} (${formatFeetInches(element.width)} x ${formatFeetInches(element.height)})`);
+        } else if (state.currentTool !== 'select') {
         actions.setStatusMessage(`${state.currentTool} tool active - Click and drag to create`);
       } else {
         actions.setStatusMessage('Ready');
@@ -399,7 +408,7 @@ function CanvasEditor() {
           y: Math.min(snappedPos.y, dragStart.y)
         };
         actions.updateElement(lastElement.id, updatedElement);
-        actions.setStatusMessage(`Drawing ${lastElement.type}: ${width.toFixed(0)}x${height.toFixed(0)}`);
+        actions.setStatusMessage(`Drawing ${lastElement.type}: ${formatFeetInches(width)} x ${formatFeetInches(height)}`);
       }
     }
   };
@@ -439,7 +448,7 @@ function CanvasEditor() {
           actions.deleteElement(lastElement.id);
           actions.setStatusMessage('Element too small - removed');
         } else if (lastElement) {
-          actions.setStatusMessage(`Created ${lastElement.type}: ${lastElement.width.toFixed(0)}x${lastElement.height.toFixed(0)}`);
+          actions.setStatusMessage(`Created ${lastElement.type}: ${formatFeetInches(lastElement.width)} x ${formatFeetInches(lastElement.height)}`);
         }
       }
     }
@@ -458,11 +467,51 @@ function CanvasEditor() {
     return null;
   };
 
-  // Zoom and pan handlers
+  // Zoom and pan handlers with zoom-to-cursor functionality
   const handleWheel = (e) => {
     e.preventDefault();
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    // Calculate the world position before zoom
+    const worldPosBeforeZoom = {
+      x: (mouseX - state.panOffset.x) / state.zoom,
+      y: (mouseY - state.panOffset.y) / state.zoom
+    };
+    
+    // Calculate new zoom level
     const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1;
-    actions.setZoom(Math.max(0.1, Math.min(5, state.zoom * scaleFactor)));
+    const newZoom = Math.max(0.1, Math.min(5, state.zoom * scaleFactor));
+    
+    // Calculate the world position after zoom
+    const worldPosAfterZoom = {
+      x: (mouseX - state.panOffset.x) / newZoom,
+      y: (mouseY - state.panOffset.y) / newZoom
+    };
+    
+    // Calculate the offset needed to keep the world position under the cursor
+    const deltaWorldPos = {
+      x: worldPosAfterZoom.x - worldPosBeforeZoom.x,
+      y: worldPosAfterZoom.y - worldPosBeforeZoom.y
+    };
+    
+    // Adjust pan offset to maintain cursor position
+    const newPanOffset = {
+      x: state.panOffset.x + deltaWorldPos.x * newZoom,
+      y: state.panOffset.y + deltaWorldPos.y * newZoom
+    };
+    
+    // Apply zoom and pan
+    actions.setZoom(newZoom);
+    actions.setPanOffset(newPanOffset);
+    
+    // Update status message with zoom percentage
+    actions.setStatusMessage(`Zoom: ${Math.round(newZoom * 100)}%`);
   };
 
   // Context menu handler
@@ -490,6 +539,26 @@ function CanvasEditor() {
   // Hide context menu
   const hideContextMenu = () => {
     setContextMenu(null);
+  };
+
+  // Helper function to convert pixels to feet and inches
+  const pixelsToFeetInches = (pixels) => {
+    const totalInches = pixels / 4; // 4 pixels = 1 inch at 100% zoom
+    const feet = Math.floor(totalInches / 12);
+    const inches = Math.round(totalInches % 12);
+    return { feet, inches };
+  };
+
+  // Helper function to format feet and inches for display
+  const formatFeetInches = (pixels) => {
+    const { feet, inches } = pixelsToFeetInches(pixels);
+    if (feet === 0) {
+      return `${inches}"`;
+    } else if (inches === 0) {
+      return `${feet}'`;
+    } else {
+      return `${feet}'-${inches}"`;
+    }
   };
 
   useEffect(() => {
@@ -600,12 +669,13 @@ function CanvasEditor() {
         </div>
       )}
 
-      {/* Coordinates Display */}
+      {/* Coordinates Display with Real-world Measurements */}
       <div className="absolute bottom-4 left-4 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded">
         Elements: {state.elements.length} | 
         Zoom: {Math.round(state.zoom * 100)}% | 
         Selected: {state.selectedElement ? state.selectedElement.type : 
                   state.selectedElements.length > 0 ? `${state.selectedElements.length} elements` : 'None'} |
+        Position: {formatFeetInches(state.coordinates.x)} x {formatFeetInches(state.coordinates.y)} |
         History: {state.historyIndex + 1}/{state.history.length}
       </div>
     </div>
