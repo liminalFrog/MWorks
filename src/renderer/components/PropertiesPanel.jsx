@@ -3,6 +3,27 @@ import { useApp } from '../context/AppContext';
 
 function PropertiesPanel() {
   const { state, actions } = useApp();
+
+  // Helper function to convert pixels to feet and inches
+  const pixelsToFeetInches = (pixels) => {
+    const totalInches = pixels / 4; // 4 pixels = 1 inch at 100% zoom
+    const feet = Math.floor(totalInches / 12);
+    const inches = Math.round(totalInches % 12);
+    return { feet, inches };
+  };
+
+  // Helper function to format feet and inches for display
+  const formatFeetInches = (pixels) => {
+    const { feet, inches } = pixelsToFeetInches(pixels);
+    if (feet === 0) {
+      return `${inches}"`;
+    } else if (inches === 0) {
+      return `${feet}'`;
+    } else {
+      return `${feet}'-${inches}"`;
+    }
+  };
+
   const [properties, setProperties] = useState({
     type: 'Wall',
     width: '6',
@@ -16,10 +37,14 @@ function PropertiesPanel() {
   // Update properties when selected element changes
   useEffect(() => {
     if (state.selectedElement) {
+      // Convert pixel measurements to inches for display in input fields
+      const widthInInches = Math.round((state.selectedElement.width || 24) / 4); // 4 pixels = 1 inch
+      const heightInInches = Math.round((state.selectedElement.height || 48) / 4);
+      
       setProperties({
         type: state.selectedElement.type || 'Wall',
-        width: state.selectedElement.width?.toString() || '6',
-        height: state.selectedElement.height?.toString() || '12',
+        width: widthInInches.toString(),
+        height: heightInInches.toString(),
         material: state.selectedElement.material || 'Steel',
         gauge: state.selectedElement.gauge || '14',
         color: state.selectedElement.color || '#888888',
@@ -56,10 +81,14 @@ function PropertiesPanel() {
 
   const applyChanges = () => {
     if (state.selectedElement) {
+      // Convert inches input back to pixels for storage (4 pixels = 1 inch)
+      const widthInPixels = (parseFloat(properties.width) || 0) * 4;
+      const heightInPixels = (parseFloat(properties.height) || 0) * 4;
+      
       const updates = {
         type: properties.type,
-        width: parseFloat(properties.width) || 0,
-        height: parseFloat(properties.height) || 0,
+        width: widthInPixels,
+        height: heightInPixels,
         material: properties.material,
         gauge: properties.gauge,
         color: properties.color,
@@ -112,7 +141,7 @@ function PropertiesPanel() {
               </h3>
               <p className="text-xs text-blue-600">
                 {state.selectedElement ? 
-                  `${state.selectedElement.type} - ${state.selectedElement.width}x${state.selectedElement.height} ft` :
+                  `${state.selectedElement.type} - ${formatFeetInches(state.selectedElement.width)} x ${formatFeetInches(state.selectedElement.height)}` :
                   'Common properties will be applied to all selected elements'
                 }
               </p>
@@ -142,7 +171,7 @@ function PropertiesPanel() {
                 <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Dimensions</h3>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-xs text-gray-600 mb-1">Width (ft)</label>
+                    <label className="block text-xs text-gray-600 mb-1">Width (in)</label>
                     <input
                       type="number"
                       value={properties.width}
@@ -151,7 +180,7 @@ function PropertiesPanel() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-600 mb-1">Height (ft)</label>
+                    <label className="block text-xs text-gray-600 mb-1">Height (in)</label>
                     <input
                       type="number"
                       value={properties.height}
@@ -171,7 +200,8 @@ function PropertiesPanel() {
                 <select 
                   value={properties.material}
                   onChange={(e) => handlePropertyChange('material', e.target.value)}
-                  className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                  disabled={properties.material === 'Mixed'}
+                  className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
                 >
                   {properties.material === 'Mixed' && <option value="Mixed">Mixed Materials</option>}
                   {materialOptions.map(material => (
@@ -179,12 +209,14 @@ function PropertiesPanel() {
                   ))}
                 </select>
               </div>
+              
               <div>
-                <label className="block text-xs text-gray-600 mb-1">Gauge</label>
+                <label className="block text-xs text-gray-600 mb-1">Gauge/Thickness</label>
                 <select 
                   value={properties.gauge}
                   onChange={(e) => handlePropertyChange('gauge', e.target.value)}
-                  className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                  disabled={properties.gauge === 'Mixed'}
+                  className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
                 >
                   {properties.gauge === 'Mixed' && <option value="Mixed">Mixed Gauges</option>}
                   {gaugeOptions.map(gauge => (
@@ -194,60 +226,58 @@ function PropertiesPanel() {
               </div>
             </div>
 
-            {/* Appearance */}
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Appearance</h3>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Color</label>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="color"
-                    value={properties.color}
-                    onChange={(e) => handlePropertyChange('color', e.target.value)}
-                    className="w-8 h-8 rounded border border-gray-300"
-                  />
-                  <input
-                    type="text"
-                    value={properties.color}
-                    onChange={(e) => handlePropertyChange('color', e.target.value)}
-                    className="flex-1 p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+            {/* Color */}
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Color</label>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="color"
+                  value={properties.color}
+                  onChange={(e) => handlePropertyChange('color', e.target.value)}
+                  className="w-8 h-8 border border-gray-300 rounded cursor-pointer"
+                />
+                <input
+                  type="text"
+                  value={properties.color}
+                  onChange={(e) => handlePropertyChange('color', e.target.value)}
+                  className="flex-1 p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                  placeholder="#888888"
+                />
               </div>
             </div>
 
             {/* Description */}
             <div>
-              <label className="block text-xs text-gray-600 mb-1">Description</label>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
               <textarea
                 value={properties.description}
                 onChange={(e) => handlePropertyChange('description', e.target.value)}
-                rows="3"
                 className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 resize-none"
+                rows="2"
                 placeholder="Element description..."
               />
             </div>
 
-            {/* Actions */}
-            <div className="pt-4 border-t border-gray-200 space-y-2">
-              <button 
+            {/* Action Buttons */}
+            <div className="flex space-x-2 pt-2">
+              <button
                 onClick={applyChanges}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 px-4 rounded transition-colors"
+                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-blue-700 focus:ring-2 focus:ring-blue-500"
               >
                 Apply Changes
               </button>
-              <button 
+              <button
                 onClick={deleteElement}
-                className="w-full bg-red-600 hover:bg-red-700 text-white text-sm py-2 px-4 rounded transition-colors"
+                className="bg-red-600 text-white px-4 py-2 rounded text-sm font-medium hover:bg-red-700 focus:ring-2 focus:ring-red-500"
               >
-                Delete Element
+                Delete
               </button>
             </div>
           </>
         ) : (
           <div className="text-center text-gray-500 py-8">
-            <div className="text-4xl mb-2">📐</div>
-            <p className="text-sm">Select an element to view properties</p>
+            <p className="text-sm">No element selected</p>
+            <p className="text-xs text-gray-400 mt-1">Select an element to view its properties</p>
           </div>
         )}
       </div>

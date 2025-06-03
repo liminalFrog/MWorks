@@ -10,6 +10,7 @@ function CanvasEditor() {
   const [panStart, setPanStart] = useState(null);
   const [selectionBox, setSelectionBox] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [cursorGridPos, setCursorGridPos] = useState(null);
 
   // Grid and canvas setup
   const setupCanvas = useCallback(() => {
@@ -21,7 +22,7 @@ function CanvasEditor() {
     canvas.height = container.clientHeight;
     
     draw();
-  }, [state.elements, state.showGrid, state.zoom, state.panOffset]);
+  }, [state.elements, state.showGrid, state.zoom, state.panOffset, cursorGridPos]);
 
   // Drawing function
   const draw = useCallback(() => {
@@ -41,6 +42,11 @@ function CanvasEditor() {
     // Draw grid
     if (state.showGrid) {
       drawGrid(ctx, canvas);
+    }
+    
+    // Draw cursor grid highlight
+    if (state.showGrid && cursorGridPos) {
+      drawCursorHighlight(ctx);
     }
     
     // Draw elements (only visible levels)
@@ -69,35 +75,38 @@ function CanvasEditor() {
     
     // Restore context state
     ctx.restore();
-  }, [state.elements, state.selectedElement, state.selectedElements, state.showGrid, state.zoom, state.panOffset, state.levels, state.activeLevel, selectionBox]);
+  }, [state.elements, state.selectedElement, state.selectedElements, state.showGrid, state.zoom, state.panOffset, state.levels, state.activeLevel, selectionBox, cursorGridPos]);
 
   const drawGrid = (ctx, canvas) => {
-    // Base grid size represents 1 foot = 48 pixels at 100% zoom
-    const baseFeetGridSize = 48;
-    const baseInchGridSize = baseFeetGridSize / 12; // 4 pixels per inch at 100% zoom
+    // New simplified grid system:
+    // - 1 inch = 20 pixels at 100% zoom (easier to see)
+    // - 1 foot = 240 pixels at 100% zoom (12 inches * 20 pixels)
+    
+    const baseInchSize = 20; // pixels per inch at 100% zoom
+    const baseFeetSize = baseInchSize * 12; // 240 pixels per foot at 100% zoom
     
     // Adjust grid sizes based on zoom level
-    const feetGridSize = baseFeetGridSize * state.zoom;
-    const inchGridSize = baseInchGridSize * state.zoom;
+    const inchGridSize = baseInchSize * state.zoom;
+    const feetGridSize = baseFeetSize * state.zoom;
     
-    // Grid colors
-    const feetGridColor = '#d1d5db';        // Darker for feet
-    const majorFeetGridColor = '#9ca3af';   // Even darker for 5-foot markers
-    const inchGridColor = '#f3f4f6';        // Light for inches
+    // Grid colors - much more distinct
+    const inchGridColor = '#f0f0f0';      // Very light gray for inches
+    const feetGridColor = '#c0c0c0';      // Medium gray for feet
+    const majorFeetGridColor = '#888888'; // Dark gray for 5-foot markers
     
     const startX = -state.panOffset.x / state.zoom;
     const startY = -state.panOffset.y / state.zoom;
     const endX = (canvas.width - state.panOffset.x) / state.zoom;
     const endY = (canvas.height - state.panOffset.y) / state.zoom;
     
-    // Draw inch grid when zoomed in enough (when inch grid is >= 2 pixels)
-    if (inchGridSize >= 2) {
+    // Only draw inch grid when zoomed in enough (when inch grid is >= 8 pixels)
+    if (inchGridSize >= 8) {
       ctx.strokeStyle = inchGridColor;
-      ctx.lineWidth = 0.25;
+      ctx.lineWidth = 0.5;
       
       // Vertical inch lines
-      for (let x = Math.floor(startX / baseInchGridSize) * baseInchGridSize; x <= endX; x += baseInchGridSize) {
-        if (x % baseFeetGridSize !== 0) { // Skip if it's a foot line
+      for (let x = Math.floor(startX / baseInchSize) * baseInchSize; x <= endX; x += baseInchSize) {
+        if (x % baseFeetSize !== 0) { // Skip if it's a foot line
           ctx.beginPath();
           ctx.moveTo(x, startY);
           ctx.lineTo(x, endY);
@@ -106,8 +115,8 @@ function CanvasEditor() {
       }
       
       // Horizontal inch lines
-      for (let y = Math.floor(startY / baseInchGridSize) * baseInchGridSize; y <= endY; y += baseInchGridSize) {
-        if (y % baseFeetGridSize !== 0) { // Skip if it's a foot line
+      for (let y = Math.floor(startY / baseInchSize) * baseInchSize; y <= endY; y += baseInchSize) {
+        if (y % baseFeetSize !== 0) { // Skip if it's a foot line
           ctx.beginPath();
           ctx.moveTo(startX, y);
           ctx.lineTo(endX, y);
@@ -116,34 +125,84 @@ function CanvasEditor() {
       }
     }
     
-    // Draw feet grid (always visible when grid is enabled)
-    ctx.lineWidth = 0.5;
-    
-    // Vertical feet lines
-    for (let x = Math.floor(startX / baseFeetGridSize) * baseFeetGridSize; x <= endX; x += baseFeetGridSize) {
-      // Every 5 feet gets a thicker line
-      const isMajorGrid = (x / baseFeetGridSize) % 5 === 0;
-      ctx.strokeStyle = isMajorGrid ? majorFeetGridColor : feetGridColor;
-      ctx.lineWidth = isMajorGrid ? 1 : 0.5;
+    // Draw feet grid (always visible when grid is enabled and zoom > 0.1)
+    if (feetGridSize >= 4) {
+      // Vertical feet lines
+      for (let x = Math.floor(startX / baseFeetSize) * baseFeetSize; x <= endX; x += baseFeetSize) {
+        // Every 5 feet gets a thicker line
+        const isMajorGrid = (x / baseFeetSize) % 5 === 0;
+        ctx.strokeStyle = isMajorGrid ? majorFeetGridColor : feetGridColor;
+        ctx.lineWidth = isMajorGrid ? 2 : 1;
+        
+        ctx.beginPath();
+        ctx.moveTo(x, startY);
+        ctx.lineTo(x, endY);
+        ctx.stroke();
+      }
       
-      ctx.beginPath();
-      ctx.moveTo(x, startY);
-      ctx.lineTo(x, endY);
-      ctx.stroke();
+      // Horizontal feet lines
+      for (let y = Math.floor(startY / baseFeetSize) * baseFeetSize; y <= endY; y += baseFeetSize) {
+        // Every 5 feet gets a thicker line
+        const isMajorGrid = (y / baseFeetSize) % 5 === 0;
+        ctx.strokeStyle = isMajorGrid ? majorFeetGridColor : feetGridColor;
+        ctx.lineWidth = isMajorGrid ? 2 : 1;
+        
+        ctx.beginPath();
+        ctx.moveTo(startX, y);
+        ctx.lineTo(endX, y);
+        ctx.stroke();
+      }
     }
+  };
+
+  const drawCursorHighlight = (ctx) => {
+    if (!cursorGridPos) return;
     
-    // Horizontal feet lines
-    for (let y = Math.floor(startY / baseFeetGridSize) * baseFeetGridSize; y <= endY; y += baseFeetGridSize) {
-      // Every 5 feet gets a thicker line
-      const isMajorGrid = (y / baseFeetGridSize) % 5 === 0;
-      ctx.strokeStyle = isMajorGrid ? majorFeetGridColor : feetGridColor;
-      ctx.lineWidth = isMajorGrid ? 1 : 0.5;
-      
-      ctx.beginPath();
-      ctx.moveTo(startX, y);
-      ctx.lineTo(endX, y);
-      ctx.stroke();
-    }
+    const baseInchSize = 20; // pixels per inch at 100% zoom
+    
+    // Draw a highlighted circle at the grid intersection
+    ctx.save();
+    
+    // Create a pulsing effect by varying the radius slightly
+    const time = Date.now() / 400; // Slower pulse for better visibility
+    const pulseRadius = 5 + Math.sin(time) * 2; // Larger base radius
+    
+    // Outer glow
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.3)'; // Semi-transparent blue
+    ctx.beginPath();
+    ctx.arc(cursorGridPos.x, cursorGridPos.y, pulseRadius + 3, 0, 2 * Math.PI);
+    ctx.fill();
+    
+    // Main highlight circle
+    ctx.fillStyle = '#3b82f6'; // Blue color for highlight
+    ctx.strokeStyle = '#1d4ed8'; // Darker blue for border
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cursorGridPos.x, cursorGridPos.y, pulseRadius, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+    
+    // Add crosshair lines extending from the highlight point (shorter lines)
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    
+    const crosshairLength = baseInchSize * 0.75; // Slightly shorter crosshairs
+    
+    // Horizontal crosshair
+    ctx.beginPath();
+    ctx.moveTo(cursorGridPos.x - crosshairLength, cursorGridPos.y);
+    ctx.lineTo(cursorGridPos.x + crosshairLength, cursorGridPos.y);
+    ctx.stroke();
+    
+    // Vertical crosshair
+    ctx.beginPath();
+    ctx.moveTo(cursorGridPos.x, cursorGridPos.y - crosshairLength);
+    ctx.lineTo(cursorGridPos.x, cursorGridPos.y + crosshairLength);
+    ctx.stroke();
+    
+    ctx.setLineDash([]);
+    ctx.restore();
   };
 
   const drawElement = (ctx, element, isSelected) => {
@@ -255,20 +314,20 @@ function CanvasEditor() {
     };
   };
 
-  // Enhanced grid snapping utility with intelligent foot/inch snapping
+  // Enhanced grid snapping utility with new grid system
   const snapToGrid = (value) => {
-    const baseFeetGridSize = 48; // 1 foot = 48 pixels at 100% zoom
-    const baseInchGridSize = baseFeetGridSize / 12; // 4 pixels per inch at 100% zoom
+    const baseInchSize = 20; // 20 pixels per inch at 100% zoom
+    const baseFeetSize = baseInchSize * 12; // 240 pixels per foot at 100% zoom
     
     // Calculate actual grid sizes at current zoom level
-    const inchGridSize = baseInchGridSize * state.zoom;
+    const inchGridSize = baseInchSize * state.zoom;
     
-    // If zoomed in enough to see inch grid clearly (>=2 pixels), snap to inches
-    if (inchGridSize >= 2) {
-      return Math.round(value / baseInchGridSize) * baseInchGridSize;
+    // If zoomed in enough to see inch grid clearly (>=8 pixels), snap to inches
+    if (inchGridSize >= 8) {
+      return Math.round(value / baseInchSize) * baseInchSize;
     } else {
       // Otherwise snap to feet
-      return Math.round(value / baseFeetGridSize) * baseFeetGridSize;
+      return Math.round(value / baseFeetSize) * baseFeetSize;
     }
   };
 
@@ -343,6 +402,23 @@ function CanvasEditor() {
 
   const handleMouseMove = (e) => {
     const pos = getMousePos(e);
+    
+    // Update cursor grid position for highlighting (only when grid is visible)
+    if (state.showGrid) {
+      const baseInchSize = 20; // pixels per inch at 100% zoom
+      const baseFeetSize = baseInchSize * 12; // 240 pixels per foot
+      const inchGridSize = baseInchSize * state.zoom;
+      
+      // Choose grid granularity based on zoom level
+      const gridSize = inchGridSize >= 8 ? baseInchSize : baseFeetSize;
+      
+      setCursorGridPos({
+        x: Math.round(pos.x / gridSize) * gridSize,
+        y: Math.round(pos.y / gridSize) * gridSize
+      });
+    } else {
+      setCursorGridPos(null);
+    }
     
     // Handle panning
     if (isPanning && panStart) {
@@ -543,7 +619,7 @@ function CanvasEditor() {
 
   // Helper function to convert pixels to feet and inches
   const pixelsToFeetInches = (pixels) => {
-    const totalInches = pixels / 4; // 4 pixels = 1 inch at 100% zoom
+    const totalInches = pixels / 20; // 20 pixels = 1 inch at 100% zoom
     const feet = Math.floor(totalInches / 12);
     const inches = Math.round(totalInches % 12);
     return { feet, inches };
@@ -570,6 +646,28 @@ function CanvasEditor() {
   useEffect(() => {
     draw();
   }, [draw]);
+
+  // Animation loop for cursor highlighting
+  useEffect(() => {
+    let animationId;
+    
+    const animate = () => {
+      if (cursorGridPos && state.showGrid) {
+        draw(); // Redraw to update the pulsing animation
+      }
+      animationId = requestAnimationFrame(animate);
+    };
+    
+    if (cursorGridPos && state.showGrid) {
+      animationId = requestAnimationFrame(animate);
+    }
+    
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+    };
+  }, [cursorGridPos, state.showGrid, draw]);
 
   return (
     <div className="flex-1 bg-white relative overflow-hidden">
@@ -637,6 +735,7 @@ function CanvasEditor() {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onMouseLeave={() => setCursorGridPos(null)}
         onWheel={handleWheel}
         onContextMenu={handleContextMenu}
       />
