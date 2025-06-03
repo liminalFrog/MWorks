@@ -1,0 +1,41 @@
+{
+  "appId": "com.mworks.app",
+  "productName": "MWorks",
+  "copyright": "Copyright © 2023",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "dist/**/*",
+    "public/**/*",
+    "src/**/*"
+  ],
+  "mac": {
+    "category": "public.app-category.productivity",
+    "target": [
+      "dmg",
+      "zip"
+    ]
+  },
+  "win": {
+    "target": [
+      "nsis"
+    ]
+  },
+  "linux": {
+    "target": [
+      "AppImage",
+      "deb"
+    ]
+  },
+  "build": {
+    "asar": true,
+    "extraResources": [
+      "public/**/*"
+    ]
+  },
+  "publish": {
+    "provider": "generic",
+    "url": "https://your-update-server.com/"
+  }
+}

@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles can be added below */
+body {
+    @apply bg-gray-100 text-gray-900;
+}
+
+canvas {
+    @apply border border-gray-300;
+}
+
+.toolbar {
+    @apply bg-white shadow-md;
+}
+
+.properties-panel {
+    @apply bg-white border-r border-gray-300;
+}
+
+.levels-panel {
+    @apply bg-white border-l border-gray-300;
+}
+
+.status-bar {
+    @apply bg-gray-800 text-white;
+}
