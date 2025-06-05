@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grid Debug Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f9fafb;
+        }
+        .canvas-container {
+            margin: 20px auto;
+            width: 800px;
+            height: 600px;
+            border: 2px solid #374151;
+            position: relative;
+            background: white;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        .controls {
+            margin: 20px auto;
+            width: 800px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        button {
+            padding: 8px 16px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        .color-sample {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            border: 1px solid #ccc;
+            vertical-align: middle;
+        }
+        .color-list {
+            margin: 20px auto;
+            width: 800px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .color-item {
+            display: flex;
+            align-items: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>Grid Rendering Debug Tool</h1>
+    <p>This tool helps debug grid rendering issues in the Red Iron MTO App</p>
+    
+    <div class="color-list">
+        <div class="color-item">
+            <div class="color-sample" style="background-color: #e5e7eb;"></div>
+            <span>Inch Grid: #e5e7eb</span>
+        </div>
+        <div class="color-item">
+            <div class="color-sample" style="background-color: #d1d5db;"></div>
+            <span>Feet Grid: #d1d5db</span>
+        </div>
+        <div class="color-item">
+            <div class="color-sample" style="background-color: #9ca3af;"></div>
+            <span>5-Foot Grid: #9ca3af</span>
+        </div>
+        <div class="color-item">
+            <div class="color-sample" style="background-color: #6b7280;"></div>
+            <span>10-Foot Grid: #6b7280</span>
+        </div>
+    </div>
+    
+    <div class="controls">
+        <button id="btn-zoom-in">Zoom In (+)</button>
+        <button id="btn-zoom-out">Zoom Out (-)</button>
+        <button id="btn-reset">Reset View</button>
+        <button id="btn-toggle-grid">Toggle Grid</button>
+    </div>
+    
+    <div class="canvas-container">
+        <canvas id="debug-canvas"></canvas>
+    </div>
+    
+    <div id="status"></div>
+    
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('debug-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            draw();
+        }
+        
+        // Grid state (same as in CanvasEditor)
+        const state = {
+            zoom: 1,
+            panOffset: { x: 0, y: 0 },
+            showGrid: true
+        };
+        
+        // Grid colors (our updated, more visible colors)
+        const inchGridColor = '#e5e7eb';        // Light gray for inches (more visible)
+        const feetGridColor = '#d1d5db';        // Medium gray for feet  
+        const fiveFeetGridColor = '#9ca3af';    // Darker gray for 5-foot marks
+        const tenFeetGridColor = '#6b7280';     // Even darker gray for 10-foot marks
+        
+        // Base sizes
+        const baseInchSize = 20; // pixels per inch at 100% zoom
+        const baseFeetSize = baseInchSize * 12; // 240 pixels per foot
+        const base5FeetSize = baseFeetSize * 5; // 1200 pixels per 5 feet
+        const base10FeetSize = baseFeetSize * 10; // 2400 pixels per 10 feet
+        
+        // Draw function
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Save context state
+            ctx.save();
+            
+            // Apply zoom and pan
+            ctx.translate(state.panOffset.x, state.panOffset.y);
+            ctx.scale(state.zoom, state.zoom);
+            
+            // Draw grid if enabled
+            if (state.showGrid) {
+                drawGrid();
+            }
+            
+            // Restore context
+            ctx.restore();
+            
+            // Update status
+            document.getElementById('status').textContent = 
+                `Zoom: ${(state.zoom * 100).toFixed(0)}%, Grid: ${state.showGrid ? 'ON' : 'OFF'}, Pan: (${state.panOffset.x}, ${state.panOffset.y})`;
+        }
+        
+        // Grid drawing function
+        function drawGrid() {
+            // Adjust grid sizes based on zoom level
+            const inchGridSize = baseInchSize;
+            const feetGridSize = baseFeetSize;
+            const fiveFeetGridSize = base5FeetSize;
+            const tenFeetGridSize = base10FeetSize;
+            
+            // Calculate visible area in world coordinates
+            const leftX = -state.panOffset.x / state.zoom;
+            const topY = -state.panOffset.y / state.zoom;
+            const rightX = leftX + canvas.width / state.zoom;
+            const bottomY = topY + canvas.height / state.zoom;
+            
+            // Draw appropriate grid based on zoom level
+            let gridSize, lineColor, lineWidth;
+            
+            // Determine which grid level to show based on zoom
+            if (state.zoom >= 0.5) {
+                // Show inch grid when zoomed in enough
+                gridSize = baseInchSize;
+                lineColor = inchGridColor;
+                lineWidth = 0.8; // Increased visibility
+            } else if (state.zoom >= 0.1) {
+                // Show foot grid at medium zoom
+                gridSize = baseFeetSize;
+                lineColor = feetGridColor;
+                lineWidth = 1;
+            } else if (state.zoom >= 0.05) {
+                // Show 5-foot grid when zoomed out
+                gridSize = base5FeetSize;
+                lineColor = fiveFeetGridColor;
+                lineWidth = 1.2;
+            } else {
+                // Show 10-foot grid when very zoomed out
+                gridSize = base10FeetSize;
+                lineColor = tenFeetGridColor;
+                lineWidth = 1.5;
+            }
+            
+            ctx.strokeStyle = lineColor;
+            ctx.lineWidth = lineWidth;
+            ctx.setLineDash([]);
+            
+            // Draw vertical lines
+            const startX = Math.floor(leftX / gridSize) * gridSize;
+            for (let x = startX; x <= rightX + gridSize; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, topY);
+                ctx.lineTo(x, bottomY);
+                ctx.stroke();
+            }
+            
+            // Draw horizontal lines
+            const startY = Math.floor(topY / gridSize) * gridSize;
+            for (let y = startY; y <= bottomY + gridSize; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(leftX, y);
+                ctx.lineTo(rightX, y);
+                ctx.stroke();
+            }
+            
+            // Draw major grid lines (feet) if showing inch grid
+            if (state.zoom >= 0.5 && feetGridSize > 10) {
+                ctx.strokeStyle = feetGridColor;
+                ctx.lineWidth = 1;
+                
+                // Major vertical lines
+                const startMajorX = Math.floor(leftX / baseFeetSize) * baseFeetSize;
+                for (let x = startMajorX; x <= rightX + baseFeetSize; x += baseFeetSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, topY);
+                    ctx.lineTo(x, bottomY);
+                    ctx.stroke();
+                }
+                
+                // Major horizontal lines
+                const startMajorY = Math.floor(topY / baseFeetSize) * baseFeetSize;
+                for (let y = startMajorY; y <= bottomY + baseFeetSize; y += baseFeetSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(leftX, y);
+                    ctx.lineTo(rightX, y);
+                    ctx.stroke();
+                }
+            }
+            
+            // Draw super major grid lines (5 feet) if showing foot or inch grid
+            if (state.zoom >= 0.1 && fiveFeetGridSize > 20) {
+                ctx.strokeStyle = fiveFeetGridColor;
+                ctx.lineWidth = 1.5;
+                
+                // Super major vertical lines
+                const startSuperX = Math.floor(leftX / base5FeetSize) * base5FeetSize;
+                for (let x = startSuperX; x <= rightX + base5FeetSize; x += base5FeetSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, topY);
+                    ctx.lineTo(x, bottomY);
+                    ctx.stroke();
+                }
+                
+                // Super major horizontal lines
+                const startSuperY = Math.floor(topY / base5FeetSize) * base5FeetSize;
+                for (let y = startSuperY; y <= bottomY + base5FeetSize; y += base5FeetSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(leftX, y);
+                    ctx.lineTo(rightX, y);
+                    ctx.stroke();
+                }
+            }
+        }
+        
+        // Event listeners for UI controls
+        document.getElementById('btn-zoom-in').addEventListener('click', () => {
+            state.zoom = Math.min(5, state.zoom * 1.2);
+            draw();
+        });
+        
+        document.getElementById('btn-zoom-out').addEventListener('click', () => {
+            state.zoom = Math.max(0.1, state.zoom * 0.8);
+            draw();
+        });
+        
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            state.zoom = 1;
+            state.panOffset = { x: 0, y: 0 };
+            draw();
+        });
+        
+        document.getElementById('btn-toggle-grid').addEventListener('click', () => {
+            state.showGrid = !state.showGrid;
+            draw();
+        });
+        
+        // Mouse handling for panning
+        let isPanning = false;
+        let panStart = { x: 0, y: 0 };
+        
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) { // Left mouse button
+                isPanning = true;
+                panStart = { x: e.clientX, y: e.clientY };
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            if (isPanning) {
+                const deltaX = e.clientX - panStart.x;
+                const deltaY = e.clientY - panStart.y;
+                state.panOffset = {
+                    x: state.panOffset.x + deltaX,
+                    y: state.panOffset.y + deltaY
+                };
+                panStart = { x: e.clientX, y: e.clientY };
+                draw();
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            isPanning = false;
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            isPanning = false;
+        });
+        
+        // Mouse wheel for zooming
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            state.zoom = Math.max(0.1, Math.min(5, state.zoom * zoomFactor));
+            draw();
+        });
+        
+        // Initial setup
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    </script>
+</body>
+</html>

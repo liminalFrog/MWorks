@@ -11,15 +11,32 @@ function CanvasEditor() {
   const [selectionBox, setSelectionBox] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [cursorGridPos, setCursorGridPos] = useState(null);
+  // New states for element manipulation
+  const [resizeHandle, setResizeHandle] = useState(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const [isDraggingElement, setIsDraggingElement] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  // New states for measurement tool
+  const [measureStart, setMeasureStart] = useState(null);
+  const [measureEnd, setMeasureEnd] = useState(null);
+  const [measurements, setMeasurements] = useState([]);
 
   // Grid and canvas setup
   const setupCanvas = useCallback(() => {
+    console.log('SETUP CANVAS CALLED', { showGrid: state.showGrid, zoom: state.zoom, elements: state.elements.length });
     const canvas = canvasRef.current;
     if (!canvas) return;
     
     const container = canvas.parentElement;
     canvas.width = container.clientWidth;
     canvas.height = container.clientHeight;
+    
+    console.log('Canvas dimensions:', {
+      width: canvas.width,
+      height: canvas.height,
+      containerWidth: container.clientWidth,
+      containerHeight: container.clientHeight
+    });
     
     draw();
   }, [state.elements, state.showGrid, state.zoom, state.panOffset, cursorGridPos]);
@@ -40,6 +57,7 @@ function CanvasEditor() {
     ctx.scale(state.zoom, state.zoom);
     
     // Draw grid
+    console.log('DRAW FUNCTION checking showGrid:', state.showGrid);
     if (state.showGrid) {
       drawGrid(ctx, canvas);
     }
@@ -48,6 +66,9 @@ function CanvasEditor() {
     if (state.showGrid && cursorGridPos) {
       drawCursorHighlight(ctx);
     }
+    
+    // Draw measurements
+    drawMeasurements(ctx);
     
     // Draw elements (only visible levels)
     const visibleLevels = state.levels.filter(level => level.visible).map(level => level.id);
@@ -58,6 +79,16 @@ function CanvasEditor() {
                           state.selectedElements.some(sel => sel.id === element.id);
         drawElement(ctx, element, isSelected);
       });
+    
+    // Draw resize handles for selected element
+    if (state.selectedElement && state.currentTool === 'select') {
+      drawResizeHandles(ctx, state.selectedElement);
+    }
+    
+    // Draw measurement tool preview
+    if (state.currentTool === 'measure' && measureStart && measureEnd) {
+      drawMeasurementLine(ctx, measureStart, measureEnd, true);
+    }
     
     // Draw selection box
     if (selectionBox) {
@@ -75,84 +106,160 @@ function CanvasEditor() {
     
     // Restore context state
     ctx.restore();
-  }, [state.elements, state.selectedElement, state.selectedElements, state.showGrid, state.zoom, state.panOffset, state.levels, state.activeLevel, selectionBox, cursorGridPos]);
+  }, [state.elements, state.selectedElement, state.selectedElements, state.showGrid, state.zoom, state.panOffset, state.levels, state.activeLevel, selectionBox, cursorGridPos, measureStart, measureEnd, measurements]);
 
   const drawGrid = (ctx, canvas) => {
-    // New simplified grid system:
-    // - 1 inch = 20 pixels at 100% zoom (easier to see)
+    console.log('GRID DRAWING CALLED', { showGrid: state.showGrid, zoom: state.zoom });
+    // Professional hierarchical grid system:
+    // - 1 inch = 20 pixels at 100% zoom
     // - 1 foot = 240 pixels at 100% zoom (12 inches * 20 pixels)
+    // - 5 feet = 1200 pixels (major grid lines)
+    // - 10 feet = 2400 pixels (super major grid lines when zoomed out)
     
     const baseInchSize = 20; // pixels per inch at 100% zoom
-    const baseFeetSize = baseInchSize * 12; // 240 pixels per foot at 100% zoom
+    const baseFeetSize = baseInchSize * 12; // 240 pixels per foot
+    const base5FeetSize = baseFeetSize * 5; // 1200 pixels per 5 feet
+    const base10FeetSize = baseFeetSize * 10; // 2400 pixels per 10 feet
     
-    // Adjust grid sizes based on zoom level
+    // Adjust grid sizes based on zoom level - these are used for visibility checks
     const inchGridSize = baseInchSize * state.zoom;
     const feetGridSize = baseFeetSize * state.zoom;
+    const fiveFeetGridSize = base5FeetSize * state.zoom;
+    const tenFeetGridSize = base10FeetSize * state.zoom;
     
-    // Grid colors - much more distinct
-    const inchGridColor = '#f0f0f0';      // Very light gray for inches
-    const feetGridColor = '#c0c0c0';      // Medium gray for feet
-    const majorFeetGridColor = '#888888'; // Dark gray for 5-foot markers
+    // Professional grid colors with hierarchy - EXTREMELY bold colors for guaranteed visibility
+    const inchGridColor = '#a1a1aa';      // Medium gray for inches - was #c7cbd1
+    const feetGridColor = '#71717a';      // Darker gray for feet - was #9ca3af
+    const fiveFeetGridColor = '#3f3f46';  // Very dark gray for 5-foot marks - was #6b7280
+    const tenFeetGridColor = '#18181b';   // Nearly black for 10-foot marks - was #4b5563
     
-    const startX = -state.panOffset.x / state.zoom;
-    const startY = -state.panOffset.y / state.zoom;
-    const endX = (canvas.width - state.panOffset.x) / state.zoom;
-    const endY = (canvas.height - state.panOffset.y) / state.zoom;
+    // Calculate visible area in world coordinates
+    const leftX = -state.panOffset.x / state.zoom;
+    const topY = -state.panOffset.y / state.zoom;
+    const rightX = leftX + canvas.width / state.zoom;
+    const bottomY = topY + canvas.height / state.zoom;
     
-    // Only draw inch grid when zoomed in enough (when inch grid is >= 8 pixels)
-    if (inchGridSize >= 8) {
-      ctx.strokeStyle = inchGridColor;
-      ctx.lineWidth = 0.5;
-      
-      // Vertical inch lines
-      for (let x = Math.floor(startX / baseInchSize) * baseInchSize; x <= endX; x += baseInchSize) {
-        if (x % baseFeetSize !== 0) { // Skip if it's a foot line
-          ctx.beginPath();
-          ctx.moveTo(x, startY);
-          ctx.lineTo(x, endY);
-          ctx.stroke();
-        }
-      }
-      
-      // Horizontal inch lines
-      for (let y = Math.floor(startY / baseInchSize) * baseInchSize; y <= endY; y += baseInchSize) {
-        if (y % baseFeetSize !== 0) { // Skip if it's a foot line
-          ctx.beginPath();
-          ctx.moveTo(startX, y);
-          ctx.lineTo(endX, y);
-          ctx.stroke();
-        }
-      }
+    // Draw appropriate grid based on zoom level
+    let gridSize, lineColor, lineWidth;
+    
+    // Determine which grid level to show based on zoom
+    if (state.zoom >= 0.5) {
+      // Show inch grid when zoomed in enough
+      gridSize = baseInchSize;
+      lineColor = inchGridColor;
+      lineWidth = 1.5; // Significantly increased thickness - was 1.0
+    } else if (state.zoom >= 0.1) {
+      // Show foot grid at medium zoom
+      gridSize = baseFeetSize;
+      lineColor = feetGridColor;
+      lineWidth = 2.0; // Significantly increased thickness - was 1.5
+    } else if (state.zoom >= 0.05) {
+      // Show 5-foot grid when zoomed out
+      gridSize = base5FeetSize;
+      lineColor = fiveFeetGridColor;
+      lineWidth = 2.5; // Significantly increased thickness - was 2.0
+    } else {
+      // Show 10-foot grid when very zoomed out
+      gridSize = base10FeetSize;
+      lineColor = tenFeetGridColor;
+      lineWidth = 3.0; // Significantly increased thickness - was 2.5
     }
     
-    // Draw feet grid (always visible when grid is enabled and zoom > 0.1)
-    if (feetGridSize >= 4) {
-      // Vertical feet lines
-      for (let x = Math.floor(startX / baseFeetSize) * baseFeetSize; x <= endX; x += baseFeetSize) {
-        // Every 5 feet gets a thicker line
-        const isMajorGrid = (x / baseFeetSize) % 5 === 0;
-        ctx.strokeStyle = isMajorGrid ? majorFeetGridColor : feetGridColor;
-        ctx.lineWidth = isMajorGrid ? 2 : 1;
-        
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = lineWidth;
+    ctx.setLineDash([]);
+    
+    // Draw vertical lines
+    const startX = Math.floor(leftX / gridSize) * gridSize;
+    for (let x = startX; x <= rightX + gridSize; x += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(x, topY);
+      ctx.lineTo(x, bottomY);
+      ctx.stroke();
+    }
+    
+    // Draw horizontal lines
+    const startY = Math.floor(topY / gridSize) * gridSize;
+    for (let y = startY; y <= bottomY + gridSize; y += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(leftX, y);
+      ctx.lineTo(rightX, y);
+      ctx.stroke();
+    }
+    
+    // Draw major grid lines (feet) if showing inch grid
+    if (state.zoom >= 0.5 && feetGridSize > 10) {
+      ctx.strokeStyle = feetGridColor;
+      ctx.lineWidth = 2.0; // Increased for better visibility - was 1.5
+      
+      // Major vertical lines
+      const startMajorX = Math.floor(leftX / baseFeetSize) * baseFeetSize;
+      for (let x = startMajorX; x <= rightX + baseFeetSize; x += baseFeetSize) {
         ctx.beginPath();
-        ctx.moveTo(x, startY);
-        ctx.lineTo(x, endY);
+        ctx.moveTo(x, topY);
+        ctx.lineTo(x, bottomY);
         ctx.stroke();
       }
       
-      // Horizontal feet lines
-      for (let y = Math.floor(startY / baseFeetSize) * baseFeetSize; y <= endY; y += baseFeetSize) {
-        // Every 5 feet gets a thicker line
-        const isMajorGrid = (y / baseFeetSize) % 5 === 0;
-        ctx.strokeStyle = isMajorGrid ? majorFeetGridColor : feetGridColor;
-        ctx.lineWidth = isMajorGrid ? 2 : 1;
-        
+      // Major horizontal lines
+      const startMajorY = Math.floor(topY / baseFeetSize) * baseFeetSize;
+      for (let y = startMajorY; y <= bottomY + baseFeetSize; y += baseFeetSize) {
         ctx.beginPath();
-        ctx.moveTo(startX, y);
-        ctx.lineTo(endX, y);
+        ctx.moveTo(leftX, y);
+        ctx.lineTo(rightX, y);
         ctx.stroke();
       }
     }
+    
+    // Draw super major grid lines (5 feet) if showing foot or inch grid
+    if (state.zoom >= 0.1 && fiveFeetGridSize > 20) {
+      ctx.strokeStyle = fiveFeetGridColor;
+      ctx.lineWidth = 2.5; // Increased for better visibility - was 2.0
+      
+      // Super major vertical lines
+      const startSuperX = Math.floor(leftX / base5FeetSize) * base5FeetSize;
+      for (let x = startSuperX; x <= rightX + base5FeetSize; x += base5FeetSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, topY);
+        ctx.lineTo(x, bottomY);
+        ctx.stroke();
+      }
+      
+      // Super major horizontal lines
+      const startSuperY = Math.floor(topY / base5FeetSize) * base5FeetSize;
+      for (let y = startSuperY; y <= bottomY + base5FeetSize; y += base5FeetSize) {
+        ctx.beginPath();
+        ctx.moveTo(leftX, y);
+        ctx.lineTo(rightX, y);
+        ctx.stroke();
+      }
+    }
+    
+    // Add subtle origin indicators (0,0 crosshairs)
+    if (leftX <= 0 && rightX >= 0 && topY <= 0 && bottomY >= 0) {
+      ctx.strokeStyle = '#ff0000';
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.3;
+      
+      // Origin crosshairs
+      ctx.beginPath();
+      ctx.moveTo(-10, 0);
+      ctx.lineTo(10, 0);
+      ctx.moveTo(0, -10);
+      ctx.lineTo(0, 10);
+      ctx.stroke();
+      
+      ctx.globalAlpha = 1;
+    }
+    
+    // DEBUG: Draw a bold border around the entire grid area to make it easy to see
+    ctx.strokeStyle = '#ff00ff'; // Magenta border
+    ctx.lineWidth = 4;
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.rect(leftX, topY, rightX - leftX, bottomY - topY);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   };
 
   const drawCursorHighlight = (ctx) => {
@@ -208,15 +315,54 @@ function CanvasEditor() {
   const drawElement = (ctx, element, isSelected) => {
     ctx.save();
     
+    // Professional color scheme for different element types
+    const elementStyles = {
+      wall: {
+        fillColor: 'rgba(107, 114, 128, 0.8)',  // Gray-500 with transparency
+        strokeColor: '#374151',                 // Gray-700
+        selectedColor: '#3b82f6'               // Blue-500
+      },
+      door: {
+        fillColor: 'rgba(239, 68, 68, 0.6)',   // Red-500 with transparency
+        strokeColor: '#dc2626',                 // Red-600
+        selectedColor: '#ef4444'               // Red-500
+      },
+      window: {
+        fillColor: 'rgba(59, 130, 246, 0.6)',  // Blue-500 with transparency
+        strokeColor: '#2563eb',                 // Blue-600
+        selectedColor: '#3b82f6'               // Blue-500
+      },
+      column: {
+        fillColor: 'rgba(16, 185, 129, 0.7)',  // Emerald-500 with transparency
+        strokeColor: '#059669',                 // Emerald-600
+        selectedColor: '#10b981'               // Emerald-500
+      },
+      beam: {
+        fillColor: 'rgba(245, 158, 11, 0.7)',  // Amber-500 with transparency
+        strokeColor: '#d97706',                 // Amber-600
+        selectedColor: '#f59e0b'               // Amber-500
+      }
+    };
+    
+    const style = elementStyles[element.type] || elementStyles.wall;
+    
     if (isSelected) {
-      ctx.strokeStyle = '#3b82f6';
+      ctx.strokeStyle = style.selectedColor;
       ctx.lineWidth = 3;
+      ctx.shadowColor = style.selectedColor;
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
     } else {
-      ctx.strokeStyle = element.color || '#374151';
+      ctx.strokeStyle = style.strokeColor;
       ctx.lineWidth = 2;
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.1)';
+      ctx.shadowBlur = 2;
+      ctx.shadowOffsetX = 1;
+      ctx.shadowOffsetY = 1;
     }
     
-    ctx.fillStyle = element.fillColor || 'rgba(156, 163, 175, 0.1)';
+    ctx.fillStyle = element.fillColor || style.fillColor;
     
     switch (element.type) {
       case 'wall':
@@ -238,41 +384,156 @@ function CanvasEditor() {
         break;
     }
     
+    // Add element labels when zoomed in enough
+    if (state.zoom > 0.3) {
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = isSelected ? '#ffffff' : '#000000';
+      ctx.font = `${Math.max(10, 12 * state.zoom)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      const centerX = element.x + element.width / 2;
+      const centerY = element.y + element.height / 2;
+      const label = element.type.charAt(0).toUpperCase() + element.type.slice(1);
+      
+      // Add text background for better readability
+      const textMetrics = ctx.measureText(label);
+      const textWidth = textMetrics.width;
+      const textHeight = 14 * state.zoom;
+      
+      ctx.fillStyle = isSelected ? 'rgba(59, 130, 246, 0.8)' : 'rgba(255, 255, 255, 0.8)';
+      ctx.fillRect(
+        centerX - textWidth / 2 - 2,
+        centerY - textHeight / 2 - 1,
+        textWidth + 4,
+        textHeight + 2
+      );
+      
+      ctx.fillStyle = isSelected ? '#ffffff' : '#000000';
+      ctx.fillText(label, centerX, centerY);
+    }
+    
     ctx.restore();
   };
 
   const drawWall = (ctx, element) => {
+    // Draw main wall body
     ctx.beginPath();
     ctx.rect(element.x, element.y, element.width, element.height);
     ctx.fill();
     ctx.stroke();
+    
+    // Add texture pattern for walls when zoomed in
+    if (state.zoom > 0.5) {
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.strokeStyle = '#6b7280';
+      ctx.lineWidth = 0.5;
+      
+      // Horizontal mortar lines
+      const mortarSpacing = 8; // pixels
+      for (let y = element.y; y < element.y + element.height; y += mortarSpacing) {
+        ctx.beginPath();
+        ctx.moveTo(element.x, y);
+        ctx.lineTo(element.x + element.width, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
   };
 
   const drawDoor = (ctx, element) => {
-    // Door frame
+    const margin = 2; // Door frame margin
+    
+    // Door frame (thicker outline)
+    ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.rect(element.x, element.y, element.width, element.height);
     ctx.stroke();
     
-    // Door swing arc
+    // Door panel (inner rectangle)
+    ctx.lineWidth = 2;
+    ctx.fillStyle = 'rgba(139, 69, 19, 0.4)'; // Brown wood color
     ctx.beginPath();
-    ctx.arc(element.x, element.y, element.width, 0, Math.PI / 2);
-    ctx.stroke();
-  };
-
-  const drawWindow = (ctx, element) => {
-    // Window frame
-    ctx.beginPath();
-    ctx.rect(element.x, element.y, element.width, element.height);
+    ctx.rect(
+      element.x + margin, 
+      element.y + margin, 
+      element.width - 2 * margin, 
+      element.height - 2 * margin
+    );
     ctx.fill();
     ctx.stroke();
     
-    // Cross lines
+    // Door swing arc (90-degree arc from hinge point)
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    ctx.strokeStyle = '#dc2626';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
     ctx.beginPath();
-    ctx.moveTo(element.x, element.y);
-    ctx.lineTo(element.x + element.width, element.y + element.height);
-    ctx.moveTo(element.x + element.width, element.y);
-    ctx.lineTo(element.x, element.y + element.height);
+    ctx.arc(element.x, element.y + element.height, element.width, -Math.PI/2, 0);
+    ctx.stroke();
+    ctx.restore();
+    
+    // Door handle
+    if (state.zoom > 0.4) {
+      ctx.fillStyle = '#fbbf24'; // Gold handle
+      ctx.beginPath();
+      ctx.arc(
+        element.x + element.width - 8, 
+        element.y + element.height / 2, 
+        3, 
+        0, 
+        2 * Math.PI
+      );
+      ctx.fill();
+    }
+  };
+
+  const drawWindow = (ctx, element) => {
+    const margin = 3; // Window frame margin
+    
+    // Window frame (outer)
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.rect(element.x, element.y, element.width, element.height);
+    ctx.stroke();
+    
+    // Window glass area
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.2)'; // Light blue glass
+    ctx.beginPath();
+    ctx.rect(
+      element.x + margin, 
+      element.y + margin, 
+      element.width - 2 * margin, 
+      element.height - 2 * margin
+    );
+    ctx.fill();
+    
+    // Window mullions (cross pattern)
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#374151';
+    ctx.beginPath();
+    
+    // Vertical mullion
+    const centerX = element.x + element.width / 2;
+    ctx.moveTo(centerX, element.y + margin);
+    ctx.lineTo(centerX, element.y + element.height - margin);
+    
+    // Horizontal mullion
+    const centerY = element.y + element.height / 2;
+    ctx.moveTo(element.x + margin, centerY);
+    ctx.lineTo(element.x + element.width - margin, centerY);
+    
+    ctx.stroke();
+    
+    // Window sill (bottom accent)
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#9ca3af';
+    ctx.beginPath();
+    ctx.moveTo(element.x - 2, element.y + element.height);
+    ctx.lineTo(element.x + element.width + 2, element.y + element.height);
     ctx.stroke();
   };
 
@@ -304,6 +565,187 @@ function CanvasEditor() {
     }
   };
 
+  // Helper function to format feet and inches for display
+  const formatFeetInches = (pixels) => {
+    const totalInches = pixels / 20; // 20 pixels = 1 inch at 100% zoom
+    const feet = Math.floor(totalInches / 12);
+    const inches = Math.round(totalInches % 12);
+    if (feet === 0) {
+      return `${inches} in`;
+    } else if (inches === 0) {
+      return `${feet} ft`;
+    } else {
+      return `${feet} ft - ${inches} in`;
+    }
+  };
+
+  // Find element at given coordinates
+  const findElementAt = (x, y) => {
+    // Check in reverse order to find topmost element
+    for (let i = state.elements.length - 1; i >= 0; i--) {
+      const element = state.elements[i];
+      if (x >= element.x && x <= element.x + element.width &&
+          y >= element.y && y <= element.y + element.height) {
+        return element;
+      }
+    }
+    return null;
+  };
+
+  // Draw measurement lines and annotations
+  const drawMeasurements = (ctx) => {
+    if (measurements.length === 0) return;
+    
+    ctx.save();
+    measurements.forEach(measurement => {
+      drawMeasurementLine(ctx, measurement.start, measurement.end, false);
+    });
+    ctx.restore();
+  };
+
+  // Draw a single measurement line with dimension text
+  const drawMeasurementLine = (ctx, start, end, isPreview = false) => {
+    ctx.save();
+    
+    // Line style
+    ctx.strokeStyle = isPreview ? '#ff6b35' : '#2563eb';
+    ctx.lineWidth = 2;
+    ctx.setLineDash(isPreview ? [5, 5] : []);
+    
+    // Draw measurement line
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+    
+    // Draw end markers
+    const markerSize = 4;
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.fillRect(start.x - markerSize/2, start.y - markerSize/2, markerSize, markerSize);
+    ctx.fillRect(end.x - markerSize/2, end.y - markerSize/2, markerSize, markerSize);
+    
+    // Calculate distance and draw text
+    const distance = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
+    const distanceText = formatFeetInches(distance);
+    
+    // Text position (middle of line)
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
+    
+    // Draw text background
+    ctx.font = '12px Arial';
+    const textMetrics = ctx.measureText(distanceText);
+    const textWidth = textMetrics.width;
+    const textHeight = 16;
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.fillRect(midX - textWidth/2 - 4, midY - textHeight/2 - 2, textWidth + 8, textHeight + 4);
+    
+    // Draw text
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(distanceText, midX, midY);
+    
+    ctx.restore();
+  };
+
+  // Draw resize handles for selected element
+  const drawResizeHandles = (ctx, element) => {
+    if (!element) return;
+    
+    ctx.save();
+    
+    const handleSize = 6;
+    const handles = [
+      { x: element.x, y: element.y, cursor: 'nw-resize', type: 'top-left' },
+      { x: element.x + element.width/2, y: element.y, cursor: 'n-resize', type: 'top' },
+      { x: element.x + element.width, y: element.y, cursor: 'ne-resize', type: 'top-right' },
+      { x: element.x + element.width, y: element.y + element.height/2, cursor: 'e-resize', type: 'right' },
+      { x: element.x + element.width, y: element.y + element.height, cursor: 'se-resize', type: 'bottom-right' },
+      { x: element.x + element.width/2, y: element.y + element.height, cursor: 's-resize', type: 'bottom' },
+      { x: element.x, y: element.y + element.height, cursor: 'sw-resize', type: 'bottom-left' },
+      { x: element.x, y: element.y + element.height/2, cursor: 'w-resize', type: 'left' }
+    ];
+    
+    handles.forEach(handle => {
+      // Handle background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(handle.x - handleSize/2, handle.y - handleSize/2, handleSize, handleSize);
+      
+      // Handle border
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(handle.x - handleSize/2, handle.y - handleSize/2, handleSize, handleSize);
+    });
+    
+    ctx.restore();
+  };
+
+  // Get resize handle at position
+  const getResizeHandleAt = (x, y, element) => {
+    if (!element) return null;
+    
+    const handleSize = 6;
+    const tolerance = handleSize / 2 + 2;
+    
+    const handles = [
+      { x: element.x, y: element.y, type: 'top-left' },
+      { x: element.x + element.width/2, y: element.y, type: 'top' },
+      { x: element.x + element.width, y: element.y, type: 'top-right' },
+      { x: element.x + element.width, y: element.y + element.height/2, type: 'right' },
+      { x: element.x + element.width, y: element.y + element.height, type: 'bottom-right' },
+      { x: element.x + element.width/2, y: element.y + element.height, type: 'bottom' },
+      { x: element.x, y: element.y + element.height, type: 'bottom-left' },
+      { x: element.x, y: element.y + element.height/2, type: 'left' }
+    ];
+    
+    for (const handle of handles) {
+      if (Math.abs(x - handle.x) <= tolerance && Math.abs(y - handle.y) <= tolerance) {
+        return handle.type;
+      }
+    }
+    
+    return null;
+  };
+
+  // Handle mouse wheel for zooming
+  const handleWheel = useCallback((e) => {
+    e.preventDefault();
+    
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const newZoom = Math.max(0.1, Math.min(5, state.zoom * zoomFactor));
+    
+    // Zoom toward cursor position
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    // Calculate new pan offset to zoom toward cursor
+    const worldX = (mouseX - state.panOffset.x) / state.zoom;
+    const worldY = (mouseY - state.panOffset.y) / state.zoom;
+    
+    const newPanOffsetX = mouseX - worldX * newZoom;
+    const newPanOffsetY = mouseY - worldY * newZoom;
+    
+    actions.setZoom(newZoom);
+    actions.setPanOffset({ x: newPanOffsetX, y: newPanOffsetY });
+  }, [state.zoom, state.panOffset, actions]);
+
+  // Handle right-click context menu
+  const handleContextMenu = useCallback((e) => {
+    e.preventDefault();
+    
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    
+    setContextMenu({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    });
+  }, []);
+
   // Mouse event handlers
   const getMousePos = (e) => {
     const canvas = canvasRef.current;
@@ -314,20 +756,31 @@ function CanvasEditor() {
     };
   };
 
-  // Enhanced grid snapping utility with new grid system
+  // Enhanced grid snapping utility with hierarchical grid system
   const snapToGrid = (value) => {
     const baseInchSize = 20; // 20 pixels per inch at 100% zoom
-    const baseFeetSize = baseInchSize * 12; // 240 pixels per foot at 100% zoom
+    const baseFeetSize = baseInchSize * 12; // 240 pixels per foot
+    const base5FeetSize = baseFeetSize * 5; // 1200 pixels per 5 feet
+    const base10FeetSize = baseFeetSize * 10; // 2400 pixels per 10 feet
     
     // Calculate actual grid sizes at current zoom level
     const inchGridSize = baseInchSize * state.zoom;
+    const feetGridSize = baseFeetSize * state.zoom;
+    const fiveFeetGridSize = base5FeetSize * state.zoom;
     
-    // If zoomed in enough to see inch grid clearly (>=8 pixels), snap to inches
+    // Hierarchical snapping based on zoom level
     if (inchGridSize >= 8) {
+      // Zoomed in enough to see inches clearly - snap to inches
       return Math.round(value / baseInchSize) * baseInchSize;
-    } else {
-      // Otherwise snap to feet
+    } else if (feetGridSize >= 8) {
+      // Medium zoom - snap to feet
       return Math.round(value / baseFeetSize) * baseFeetSize;
+    } else if (fiveFeetGridSize >= 8) {
+      // Zoomed out - snap to 5-foot grid
+      return Math.round(value / base5FeetSize) * base5FeetSize;
+    } else {
+      // Very zoomed out - snap to 10-foot grid
+      return Math.round(value / base10FeetSize) * base10FeetSize;
     }
   };
 
@@ -354,8 +807,45 @@ function CanvasEditor() {
     
     // Save state to history before making changes
     actions.saveStateToHistory();
+
+    // Handle measurement tool
+    if (state.currentTool === 'measure') {
+      if (!measureStart) {
+        setMeasureStart(snappedPos);
+        actions.setStatusMessage('Click second point to complete measurement');
+      } else {
+        setMeasureEnd(snappedPos);
+        // Add measurement to permanent list
+        const newMeasurement = {
+          id: Date.now(),
+          start: measureStart,
+          end: snappedPos
+        };
+        setMeasurements(prev => [...prev, newMeasurement]);
+        
+        // Reset for next measurement
+        setMeasureStart(null);
+        setMeasureEnd(null);
+        
+        const distance = Math.sqrt(Math.pow(snappedPos.x - measureStart.x, 2) + Math.pow(snappedPos.y - measureStart.y, 2));
+        actions.setStatusMessage(`Measurement: ${formatFeetInches(distance)}`);
+      }
+      return;
+    }
     
     if (state.currentTool === 'select') {
+      // Check for resize handle on selected element first
+      if (state.selectedElement) {
+        const handle = getResizeHandleAt(snappedPos.x, snappedPos.y, state.selectedElement);
+        if (handle) {
+          setIsResizing(true);
+          setResizeHandle(handle);
+          setDragStart(snappedPos);
+          actions.setStatusMessage(`Resizing ${state.selectedElement.type}...`);
+          return;
+        }
+      }
+      
       // Find element at click position
       const element = findElementAt(snappedPos.x, snappedPos.y);
       
@@ -368,9 +858,20 @@ function CanvasEditor() {
         }
         actions.setStatusMessage(`Multi-select: ${state.selectedElements.length + 1} elements`);
       } else if (element) {
-        // Single selection
-        actions.selectElement(element);
-        actions.setStatusMessage(`Selected: ${element.type} (${formatFeetInches(element.width)} x ${formatFeetInches(element.height)})`);
+        // Check if clicking on already selected element to start dragging
+        if (state.selectedElement && state.selectedElement.id === element.id) {
+          setIsDraggingElement(true);
+          setDragStart(snappedPos);
+          setDragOffset({
+            x: snappedPos.x - element.x,
+            y: snappedPos.y - element.y
+          });
+          actions.setStatusMessage(`Moving ${element.type}...`);
+        } else {
+          // Single selection
+          actions.selectElement(element);
+          actions.setStatusMessage(`Selected: ${element.type} (${formatFeetInches(element.width)} x ${formatFeetInches(element.height)})`);
+        }
       } else {
         // Start selection box
         setIsDrawing(true);
@@ -407,10 +908,25 @@ function CanvasEditor() {
     if (state.showGrid) {
       const baseInchSize = 20; // pixels per inch at 100% zoom
       const baseFeetSize = baseInchSize * 12; // 240 pixels per foot
-      const inchGridSize = baseInchSize * state.zoom;
+      const base5FeetSize = baseFeetSize * 5; // 1200 pixels per 5 feet
+      const base10FeetSize = baseFeetSize * 10; // 2400 pixels per 10 feet
       
-      // Choose grid granularity based on zoom level
-      const gridSize = inchGridSize >= 8 ? baseInchSize : baseFeetSize;
+      // Calculate actual grid sizes at current zoom level
+      const inchGridSize = baseInchSize * state.zoom;
+      const feetGridSize = baseFeetSize * state.zoom;
+      const fiveFeetGridSize = base5FeetSize * state.zoom;
+      
+      // Choose grid granularity based on zoom level (same as snapToGrid)
+      let gridSize;
+      if (inchGridSize >= 8) {
+        gridSize = baseInchSize; // Snap to inches
+      } else if (feetGridSize >= 8) {
+        gridSize = baseFeetSize; // Snap to feet
+      } else if (fiveFeetGridSize >= 8) {
+        gridSize = base5FeetSize; // Snap to 5-foot grid
+      } else {
+        gridSize = base10FeetSize; // Snap to 10-foot grid
+      }
       
       setCursorGridPos({
         x: Math.round(pos.x / gridSize) * gridSize,
@@ -439,12 +955,133 @@ function CanvasEditor() {
     } : pos;
     
     actions.setCoordinates(snappedPos);
+
+    // Handle measurement tool preview
+    if (state.currentTool === 'measure' && measureStart && !measureEnd) {
+      setMeasureEnd(snappedPos);
+      const distance = Math.sqrt(Math.pow(snappedPos.x - measureStart.x, 2) + Math.pow(snappedPos.y - measureStart.y, 2));
+      actions.setStatusMessage(`Distance: ${formatFeetInches(distance)}`);
+      return;
+    }
+
+    // Handle element resizing
+    if (isResizing && dragStart && state.selectedElement && resizeHandle) {
+      const deltaX = snappedPos.x - dragStart.x;
+      const deltaY = snappedPos.y - dragStart.y;
+      
+      const originalElement = state.selectedElement;
+      let newProps = {};
+      
+      switch (resizeHandle) {
+        case 'top-left':
+          newProps = {
+            x: originalElement.x + deltaX,
+            y: originalElement.y + deltaY,
+            width: Math.max(20, originalElement.width - deltaX),
+            height: Math.max(20, originalElement.height - deltaY)
+          };
+          break;
+        case 'top':
+          newProps = {
+            y: originalElement.y + deltaY,
+            height: Math.max(20, originalElement.height - deltaY)
+          };
+          break;
+        case 'top-right':
+          newProps = {
+            y: originalElement.y + deltaY,
+            width: Math.max(20, originalElement.width + deltaX),
+            height: Math.max(20, originalElement.height - deltaY)
+          };
+          break;
+        case 'right':
+          newProps = {
+            width: Math.max(20, originalElement.width + deltaX)
+          };
+          break;
+        case 'bottom-right':
+          newProps = {
+            width: Math.max(20, originalElement.width + deltaX),
+            height: Math.max(20, originalElement.height + deltaY)
+          };
+          break;
+        case 'bottom':
+          newProps = {
+            height: Math.max(20, originalElement.height + deltaY)
+          };
+          break;
+        case 'bottom-left':
+          newProps = {
+            x: originalElement.x + deltaX,
+            width: Math.max(20, originalElement.width - deltaX),
+            height: Math.max(20, originalElement.height + deltaY)
+          };
+          break;
+        case 'left':
+          newProps = {
+            x: originalElement.x + deltaX,
+            width: Math.max(20, originalElement.width - deltaX)
+          };
+          break;
+      }
+      
+      actions.updateElement(originalElement.id, newProps);
+      actions.setStatusMessage(`Resizing: ${formatFeetInches(newProps.width || originalElement.width)} x ${formatFeetInches(newProps.height || originalElement.height)}`);
+      return;
+    }
+
+    // Handle element dragging
+    if (isDraggingElement && dragStart && state.selectedElement) {
+      const newX = snappedPos.x - dragOffset.x;
+      const newY = snappedPos.y - dragOffset.y;
+      
+      actions.updateElement(state.selectedElement.id, {
+        x: newX,
+        y: newY
+      });
+      
+      actions.setStatusMessage(`Moving ${state.selectedElement.type}: ${formatFeetInches(newX)} x ${formatFeetInches(newY)}`);
+      return;
+    }
     
     if (!isDrawing || !dragStart) {
-      // Show hover information
-      const element = findElementAt(snappedPos.x, snappedPos.y);        if (element && state.currentTool === 'select') {
-          actions.setStatusMessage(`Hover: ${element.type} (${formatFeetInches(element.width)} x ${formatFeetInches(element.height)})`);
-        } else if (state.currentTool !== 'select') {
+      // Show hover information and cursor changes
+      const element = findElementAt(snappedPos.x, snappedPos.y);
+      
+      // Update cursor based on context
+      const canvas = canvasRef.current;
+      if (canvas) {
+        if (state.currentTool === 'select' && state.selectedElement) {
+          const handle = getResizeHandleAt(snappedPos.x, snappedPos.y, state.selectedElement);
+          if (handle) {
+            const cursorMap = {
+              'top-left': 'nw-resize',
+              'top': 'n-resize',
+              'top-right': 'ne-resize',
+              'right': 'e-resize',
+              'bottom-right': 'se-resize',
+              'bottom': 's-resize',
+              'bottom-left': 'sw-resize',
+              'left': 'w-resize'
+            };
+            canvas.style.cursor = cursorMap[handle];
+          } else if (element && element.id === state.selectedElement.id) {
+            canvas.style.cursor = 'move';
+          } else {
+            canvas.style.cursor = 'default';
+          }
+        } else if (state.currentTool === 'measure') {
+          canvas.style.cursor = 'crosshair';
+        } else {
+          canvas.style.cursor = state.currentTool === 'select' ? 'default' : 'crosshair';
+        }
+      }
+      
+      if (element && state.currentTool === 'select') {
+        actions.setStatusMessage(`Hover: ${element.type} (${formatFeetInches(element.width)} x ${formatFeetInches(element.height)})`);
+      } else if (state.currentTool === 'measure') {
+        actions.setStatusMessage(measureStart ? 'Click second point to complete measurement' : 'Click first point to start measurement');
+      } else if (state.currentTool !== 'select') {
         actions.setStatusMessage(`${state.currentTool} tool active - Click and drag to create`);
       } else {
         actions.setStatusMessage('Ready');
@@ -508,277 +1145,124 @@ function CanvasEditor() {
           element.y + element.height <= selectionBox.y + selectionBox.height
         );
         
-        if (selectedElements.length > 0) {
-          actions.selectMultipleElements(selectedElements);
-          actions.setStatusMessage(`Selected ${selectedElements.length} elements`);
-        } else {
-          actions.clearSelection();
-          actions.setStatusMessage('No elements selected');
-        }
+        actions.setSelectedElements(selectedElements.map(el => el.id));
+        actions.setStatusMessage(`Selected ${selectedElements.length} element(s)`);
         setSelectionBox(null);
-      } else {
-        // Complete element drawing
-        const lastElement = state.elements[state.elements.length - 1];
-        if (lastElement && (lastElement.width === 0 || lastElement.height === 0)) {
-          // Remove element if it has no size
-          actions.deleteElement(lastElement.id);
-          actions.setStatusMessage('Element too small - removed');
-        } else if (lastElement) {
-          actions.setStatusMessage(`Created ${lastElement.type}: ${formatFeetInches(lastElement.width)} x ${formatFeetInches(lastElement.height)}`);
-        }
       }
+      
+      setIsDrawing(false);
+      setDragStart(null);
     }
-    setIsDrawing(false);
-    setDragStart(null);
-  };
 
-  const findElementAt = (x, y) => {
-    for (let i = state.elements.length - 1; i >= 0; i--) {
-      const element = state.elements[i];
-      if (x >= element.x && x <= element.x + element.width &&
-          y >= element.y && y <= element.y + element.height) {
-        return element;
-      }
+    // End resizing
+    if (isResizing) {
+      setIsResizing(false);
+      setResizeHandle(null);
+      actions.setStatusMessage('Ready');
     }
-    return null;
+
+    // End element dragging
+    if (isDraggingElement) {
+      setIsDraggingElement(false);
+      setDragOffset({ x: 0, y: 0 });
+      actions.setStatusMessage('Ready');
+    }
+
+    // Handle measurement tool completion
+    if (state.currentTool === 'measure' && measureStart && measureEnd) {
+      const distance = Math.sqrt(
+        Math.pow(measureEnd.x - measureStart.x, 2) + 
+        Math.pow(measureEnd.y - measureStart.y, 2)
+      );
+      
+      // Add to persistent measurements
+      setMeasurements(prev => [...prev, {
+        id: Date.now(),
+        start: measureStart,
+        end: measureEnd,
+        distance
+      }]);
+      
+      actions.setStatusMessage(`Measurement: ${formatFeetInches(distance)}`);
+      setMeasureStart(null);
+      setMeasureEnd(null);
+    }
   };
 
-  // Zoom and pan handlers with zoom-to-cursor functionality
-  const handleWheel = (e) => {
-    e.preventDefault();
-    
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-    
-    // Calculate the world position before zoom
-    const worldPosBeforeZoom = {
-      x: (mouseX - state.panOffset.x) / state.zoom,
-      y: (mouseY - state.panOffset.y) / state.zoom
-    };
-    
-    // Calculate new zoom level
-    const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1;
-    const newZoom = Math.max(0.1, Math.min(5, state.zoom * scaleFactor));
-    
-    // Calculate the world position after zoom
-    const worldPosAfterZoom = {
-      x: (mouseX - state.panOffset.x) / newZoom,
-      y: (mouseY - state.panOffset.y) / newZoom
-    };
-    
-    // Calculate the offset needed to keep the world position under the cursor
-    const deltaWorldPos = {
-      x: worldPosAfterZoom.x - worldPosBeforeZoom.x,
-      y: worldPosAfterZoom.y - worldPosBeforeZoom.y
-    };
-    
-    // Adjust pan offset to maintain cursor position
-    const newPanOffset = {
-      x: state.panOffset.x + deltaWorldPos.x * newZoom,
-      y: state.panOffset.y + deltaWorldPos.y * newZoom
-    };
-    
-    // Apply zoom and pan
-    actions.setZoom(newZoom);
-    actions.setPanOffset(newPanOffset);
-    
-    // Update status message with zoom percentage
-    actions.setStatusMessage(`Zoom: ${Math.round(newZoom * 100)}%`);
+  // Helper function for dynamic cursor styling
+  const getCursorStyle = () => {
+    if (state.currentTool === 'measure') return 'crosshair';
+    if (isPanning) return 'grabbing';
+    if (isResizing) return 'nw-resize';
+    if (isDraggingElement) return 'move';
+    return 'default';
   };
 
-  // Context menu handler
-  const handleContextMenu = (e) => {
-    e.preventDefault();
-    const pos = getMousePos(e);
-    const element = findElementAt(pos.x, pos.y);
-    
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      element: element
-    });
-  };
-
-  // Close context menu when clicking elsewhere
+  // Add useEffect hook to initialize canvas and handle window resizing
   useEffect(() => {
-    const handleClickOutside = () => setContextMenu(null);
-    if (contextMenu) {
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
-    }
-  }, [contextMenu]);
-
-  // Hide context menu
-  const hideContextMenu = () => {
-    setContextMenu(null);
-  };
-
-  // Helper function to convert pixels to feet and inches
-  const pixelsToFeetInches = (pixels) => {
-    const totalInches = pixels / 20; // 20 pixels = 1 inch at 100% zoom
-    const feet = Math.floor(totalInches / 12);
-    const inches = Math.round(totalInches % 12);
-    return { feet, inches };
-  };
-
-  // Helper function to format feet and inches for display
-  const formatFeetInches = (pixels) => {
-    const { feet, inches } = pixelsToFeetInches(pixels);
-    if (feet === 0) {
-      return `${inches}"`;
-    } else if (inches === 0) {
-      return `${feet}'`;
-    } else {
-      return `${feet}'-${inches}"`;
-    }
-  };
-
-  useEffect(() => {
+    console.log('CANVAS EFFECT RUNNING');
     setupCanvas();
-    window.addEventListener('resize', setupCanvas);
-    return () => window.removeEventListener('resize', setupCanvas);
+    
+    // Add window resize listener
+    const handleResize = () => {
+      console.log('WINDOW RESIZE - Calling setupCanvas');
+      setupCanvas();
+    };
+    
+    window.addEventListener('resize', handleResize);
+    
+    // Cleanup
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
   }, [setupCanvas]);
 
+  // Add useEffect hook to update canvas when showGrid changes
   useEffect(() => {
+    console.log('GRID STATE CHANGED', { showGrid: state.showGrid });
     draw();
-  }, [draw]);
-
-  // Animation loop for cursor highlighting
-  useEffect(() => {
-    let animationId;
-    
-    const animate = () => {
-      if (cursorGridPos && state.showGrid) {
-        draw(); // Redraw to update the pulsing animation
-      }
-      animationId = requestAnimationFrame(animate);
-    };
-    
-    if (cursorGridPos && state.showGrid) {
-      animationId = requestAnimationFrame(animate);
-    }
-    
-    return () => {
-      if (animationId) {
-        cancelAnimationFrame(animationId);
-      }
-    };
-  }, [cursorGridPos, state.showGrid, draw]);
+  }, [draw, state.showGrid]);
 
   return (
-    <div className="flex-1 bg-white relative overflow-hidden">
-      {/* Canvas Controls */}
-      <div className="absolute top-4 left-4 z-10 flex space-x-2">
-        <button
-          onClick={actions.toggleGrid}
-          className={`px-3 py-1 text-xs rounded ${
-            state.showGrid ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
-          }`}
-        >
-          Grid {state.showGrid ? 'On' : 'Off'}
-        </button>
-        <button
-          onClick={() => actions.setZoom(1)}
-          className="px-3 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
-        >
-          Reset Zoom
-        </button>
-        <span className="px-3 py-1 text-xs bg-gray-100 rounded">
-          {Math.round(state.zoom * 100)}%
-        </span>
-        <button
-          onClick={actions.undo}
-          disabled={state.historyIndex <= 0}
-          className="px-3 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300 disabled:opacity-50"
-          title="Undo (Ctrl+Z)"
-        >
-          ↶ Undo
-        </button>
-        <button
-          onClick={actions.redo}
-          disabled={state.historyIndex >= state.history.length - 1}
-          className="px-3 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300 disabled:opacity-50"
-          title="Redo (Ctrl+Y)"
-        >
-          ↷ Redo
-        </button>
-      </div>
-
-      {/* Tool Selection */}
-      <div className="absolute top-4 right-4 z-10 flex space-x-1 bg-white rounded-lg shadow-lg p-1">
-        {['select', 'wall', 'door', 'window', 'column', 'beam'].map(tool => (
-          <button
-            key={tool}
-            onClick={() => actions.setCurrentTool(tool)}
-            className={`px-3 py-2 text-xs rounded capitalize ${
-              state.currentTool === tool 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            {tool}
-          </button>
-        ))}
-      </div>
-
-      {/* Main Canvas */}
+    <div className="canvas-container relative w-full h-full bg-gray-50 overflow-hidden"
+         style={{ width: '100%', height: 'calc(100vh - 120px)' }}>
       <canvas
         ref={canvasRef}
-        className={`w-full h-full ${
-          isPanning ? 'cursor-grabbing' : 
-          state.currentTool === 'select' ? 'cursor-default' : 'cursor-crosshair'
-        }`}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={() => setCursorGridPos(null)}
         onWheel={handleWheel}
         onContextMenu={handleContextMenu}
+        className="block w-full h-full border-2 border-gray-300 rounded-lg shadow-sm"
+        style={{ 
+          cursor: getCursorStyle(),
+          background: 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'
+        }}
       />
-
-      {/* Context Menu */}
-      {contextMenu && (
-        <div 
-          className="absolute bg-white border rounded shadow-lg z-20"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onMouseLeave={hideContextMenu}
-        >
-          <button 
-            onClick={() => {
-              actions.deleteElement(state.selectedElement.id);
-              hideContextMenu();
-            }}
-            className="block px-4 py-2 text-sm text-red-600 hover:bg-red-100 w-full text-left"
-          >
-            Delete Element
-          </button>
-          <button 
-            onClick={() => {
-              actions.clearSelection();
-              hideContextMenu();
-            }}
-            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
-          >
-            Deselect All
-          </button>
+      
+      {/* Professional overlay for coordinates and info */}
+      {cursorGridPos && (
+        <div className="absolute bottom-4 left-4 bg-black bg-opacity-75 text-white px-3 py-2 rounded-md text-sm font-mono">
+          X: {Math.round(cursorGridPos.x / 20)}" Y: {Math.round(cursorGridPos.y / 20)}"
+          {state.zoom !== 1 && (
+            <span className="ml-3">Zoom: {Math.round(state.zoom * 100)}%</span>
+          )}
         </div>
       )}
-
-      {/* Coordinates Display with Real-world Measurements */}
-      <div className="absolute bottom-4 left-4 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded">
-        Elements: {state.elements.length} | 
-        Zoom: {Math.round(state.zoom * 100)}% | 
-        Selected: {state.selectedElement ? state.selectedElement.type : 
-                  state.selectedElements.length > 0 ? `${state.selectedElements.length} elements` : 'None'} |
-        Position: {formatFeetInches(state.coordinates.x)} x {formatFeetInches(state.coordinates.y)} |
-        History: {state.historyIndex + 1}/{state.history.length}
+      
+      {/* Tool indicator */}
+      <div className="absolute top-4 left-4 bg-blue-600 text-white px-3 py-2 rounded-md text-sm font-semibold capitalize">
+        {state.currentTool} Tool
       </div>
+      
+      {/* Selection info */}
+      {state.selectedElements.length > 0 && (
+        <div className="absolute top-4 right-4 bg-green-600 text-white px-3 py-2 rounded-md text-sm font-semibold">
+          {state.selectedElements.length} Selected
+        </div>
+      )}
     </div>
   );
-}
+};
 
 export default CanvasEditor;

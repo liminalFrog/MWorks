@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import { generatePDFReport, generateCSVReport } from './ReportGenerator';
 
 function Toolbar() {
   const { state, actions } = useApp();
   const [isMaximized, setIsMaximized] = useState(false);
   const [activeMenu, setActiveMenu] = useState(null);
+  const [clipboard, setClipboard] = useState([]);
   const menuRef = useRef(null);
+  const canvasRef = useRef(null);
 
   useEffect(() => {
     // Check if window is maximized on mount
@@ -106,23 +109,41 @@ function Toolbar() {
         }
         break;
       case 'export':
-        if (window.electronAPI?.exportReport) {
-          const reportData = {
-            project: state.projectName,
-            elements: state.elements,
-            levels: state.levels,
-            statistics: {
-              totalElements: state.elements.length,
-              totalArea: state.elements.reduce((sum, el) => sum + (el.width * el.height || 0), 0),
-              elementsByType: state.elements.reduce((acc, el) => {
-                acc[el.type] = (acc[el.type] || 0) + 1;
-                return acc;
-              }, {}),
-            },
-          };
-          const result = await window.electronAPI.exportReport(reportData);
+        const reportData = {
+          projectName: state.projectName,
+          elements: state.elements,
+          levels: state.levels,
+          statistics: {
+            totalElements: state.elements.length,
+            totalArea: state.elements.reduce((sum, el) => sum + (el.width * el.height || 0), 0),
+            elementsByType: state.elements.reduce((acc, el) => {
+              acc[el.type] = (acc[el.type] || 0) + 1;
+              return acc;
+            }, {}),
+          },
+        };
+
+        // Show export options dialog
+        const exportChoice = await new Promise(resolve => {
+          const choice = window.confirm('Generate PDF Report? Click OK for PDF, Cancel for CSV data export.');
+          resolve(choice ? 'pdf' : 'csv');
+        });
+
+        if (exportChoice === 'pdf') {
+          // Find canvas element for PDF generation
+          const canvasElement = document.querySelector('canvas');
+          const result = await generatePDFReport(reportData, { current: canvasElement });
           if (result.success) {
-            actions.setStatusMessage('Report exported successfully');
+            actions.setStatusMessage(`PDF report saved: ${result.fileName}`);
+          } else {
+            actions.setStatusMessage(`Export failed: ${result.error}`);
+          }
+        } else {
+          const result = generateCSVReport(reportData);
+          if (result.success) {
+            actions.setStatusMessage(`CSV data exported: ${result.fileName}`);
+          } else {
+            actions.setStatusMessage(`Export failed: ${result.error}`);
           }
         }
         break;
@@ -131,6 +152,133 @@ function Toolbar() {
         break;
     }
   };
+
+  const handleEditOperation = (operation) => {
+    setActiveMenu(null); // Close menu
+    switch (operation) {
+      case 'cut':
+        if (state.selectedElements.length > 0) {
+          const selectedElementsData = state.selectedElements.map(id => 
+            state.elements.find(el => el.id === id)
+          ).filter(Boolean);
+          setClipboard(selectedElementsData);
+          state.selectedElements.forEach(id => actions.deleteElement(id));
+          actions.setStatusMessage(`Cut ${selectedElementsData.length} element(s)`);
+        }
+        break;
+      case 'copy':
+        if (state.selectedElements.length > 0) {
+          const selectedElementsData = state.selectedElements.map(id => 
+            state.elements.find(el => el.id === id)
+          ).filter(Boolean);
+          setClipboard(selectedElementsData);
+          actions.setStatusMessage(`Copied ${selectedElementsData.length} element(s)`);
+        }
+        break;
+      case 'paste':
+        if (clipboard.length > 0) {
+          clipboard.forEach((element, index) => {
+            const newElement = {
+              ...element,
+              id: Date.now() + index,
+              x: element.x + 20, // Offset pasted elements
+              y: element.y + 20,
+            };
+            actions.addElement(newElement);
+          });
+          actions.setStatusMessage(`Pasted ${clipboard.length} element(s)`);
+        }
+        break;
+      case 'selectAll':
+        const allElementIds = state.elements.map(el => el.id);
+        actions.setSelectedElements(allElementIds);
+        actions.setStatusMessage(`Selected all ${allElementIds.length} element(s)`);
+        break;
+    }
+  };
+
+  // Add keyboard shortcut handling
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case 'z':
+            e.preventDefault();
+            if (e.shiftKey) {
+              actions.redo();
+            } else {
+              actions.undo();
+            }
+            break;
+          case 'y':
+            e.preventDefault();
+            actions.redo();
+            break;
+          case 'x':
+            e.preventDefault();
+            handleEditOperation('cut');
+            break;
+          case 'c':
+            e.preventDefault();
+            handleEditOperation('copy');
+            break;
+          case 'v':
+            e.preventDefault();
+            handleEditOperation('paste');
+            break;
+          case 'a':
+            e.preventDefault();
+            handleEditOperation('selectAll');
+            break;
+          case 'g':
+            e.preventDefault();
+            actions.toggleGrid();
+            break;
+          case '=':
+          case '+':
+            e.preventDefault();
+            actions.setZoom(Math.min(5, state.zoom * 1.2));
+            break;
+          case '-':
+            e.preventDefault();
+            actions.setZoom(Math.max(0.1, state.zoom * 0.8));
+            break;
+          case '0':
+            e.preventDefault();
+            actions.setZoom(1);
+            actions.setPanOffset({ x: 0, y: 0 });
+            break;
+        }
+      } else {
+        // Tool shortcuts (without Ctrl)
+        switch (e.key.toLowerCase()) {
+          case 'v':
+            e.preventDefault();
+            actions.setCurrentTool('select');
+            break;
+          case 'w':
+            e.preventDefault();
+            actions.setCurrentTool('wall');
+            break;
+          case 'd':
+            e.preventDefault();
+            actions.setCurrentTool('door');
+            break;
+          case 'n':
+            e.preventDefault();
+            actions.setCurrentTool('window');
+            break;
+          case 'm':
+            e.preventDefault();
+            actions.setCurrentTool('measure');
+            break;
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [actions, state, clipboard]);
 
   const handleMenuClick = (menuName) => {
     setActiveMenu(activeMenu === menuName ? null : menuName);
@@ -149,14 +297,14 @@ function Toolbar() {
       { label: 'Recent Files', action: () => handleFileOperation('recent') },
     ],
     Edit: [
-      { label: 'Undo', shortcut: 'Ctrl+Z', action: () => {} },
-      { label: 'Redo', shortcut: 'Ctrl+Y', action: () => {} },
+      { label: 'Undo', shortcut: 'Ctrl+Z', action: () => actions.undo() },
+      { label: 'Redo', shortcut: 'Ctrl+Y', action: () => actions.redo() },
       { type: 'separator' },
-      { label: 'Cut', shortcut: 'Ctrl+X', action: () => {} },
-      { label: 'Copy', shortcut: 'Ctrl+C', action: () => {} },
-      { label: 'Paste', shortcut: 'Ctrl+V', action: () => {} },
+      { label: 'Cut', shortcut: 'Ctrl+X', action: () => handleEditOperation('cut') },
+      { label: 'Copy', shortcut: 'Ctrl+C', action: () => handleEditOperation('copy') },
+      { label: 'Paste', shortcut: 'Ctrl+V', action: () => handleEditOperation('paste') },
       { type: 'separator' },
-      { label: 'Select All', shortcut: 'Ctrl+A', action: () => {} },
+      { label: 'Select All', shortcut: 'Ctrl+A', action: () => handleEditOperation('selectAll') },
     ],
     View: [
       { label: 'Zoom In', shortcut: 'Ctrl++', action: () => actions.setZoom(Math.min(5, state.zoom * 1.2)) },

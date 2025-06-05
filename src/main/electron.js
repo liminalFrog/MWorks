@@ -24,20 +24,21 @@ function createWindow() {
 
   // Load the built HTML file
   const isDev = process.env.NODE_ENV === 'development';
-  if (isDev) {
-    mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
-    mainWindow.webContents.openDevTools();
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
-  }
+  mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
+  console.log('Loading HTML file from:', path.join(__dirname, '../../dist/index.html'));
+  
+  // Always open dev tools for debugging
+  mainWindow.webContents.openDevTools();
 
   // Show window when ready to prevent visual flash
   mainWindow.once('ready-to-show', () => {
+    console.log('Main window is ready to show');
     mainWindow.show();
   });
 
   // Handle window closed
   mainWindow.on('closed', () => {
+    console.log('Main window closed');
     mainWindow = null;
   });
 }
@@ -146,6 +147,7 @@ ipcMain.handle('export-report', async (event, data) => {
 });
 
 app.whenReady().then(() => {
+  console.log('Electron app is ready, creating window...');
   createWindow();
   
   app.on('activate', () => {

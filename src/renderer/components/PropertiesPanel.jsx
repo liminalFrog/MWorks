@@ -6,7 +6,7 @@ function PropertiesPanel() {
 
   // Helper function to convert pixels to feet and inches
   const pixelsToFeetInches = (pixels) => {
-    const totalInches = pixels / 4; // 4 pixels = 1 inch at 100% zoom
+    const totalInches = pixels / 20; // 20 pixels = 1 inch at 100% zoom (updated from 4)
     const feet = Math.floor(totalInches / 12);
     const inches = Math.round(totalInches % 12);
     return { feet, inches };
@@ -16,11 +16,78 @@ function PropertiesPanel() {
   const formatFeetInches = (pixels) => {
     const { feet, inches } = pixelsToFeetInches(pixels);
     if (feet === 0) {
-      return `${inches}"`;
+      return `${inches} in`;
+    } else if (inches === 0) {
+      return `${feet} ft`;
+    } else {
+      return `${feet} ft - ${inches} in`;
+    }
+  };
+
+  // Parse various input formats and convert to total inches
+  const parseInputToInches = (input) => {
+    if (!input || typeof input !== 'string') return 0;
+    
+    const str = input.trim().toLowerCase().replace(/\s+/g, ' '); // Normalize whitespace
+    
+    // Handle decimal feet (e.g., "5.5'", "5.5ft", "5.5")
+    const decimalFeetMatch = str.match(/^(\d+(?:\.\d+)?)\s*(?:ft|feet|')?$/);
+    if (decimalFeetMatch) {
+      const feet = parseFloat(decimalFeetMatch[1]);
+      return feet * 12; // Convert feet to inches
+    }
+    
+    // Handle feet and inches combinations with various separators
+    // Patterns: "5'6", "5ft6", "5'6\"", "5 ft 6 in", "5ft-6in", "5-6", "5'6in", etc.
+    const feetInchesPatterns = [
+      /^(\d+)\s*(?:ft|feet|')\s*[-\s]*(\d+)\s*(?:in|inches|")?$/,  // 5ft6, 5'6", 5 ft 6 in
+      /^(\d+)\s*[-]\s*(\d+)$/,  // 5-6 (assume feet-inches)
+      /^(\d+)\s*(\d+)$/         // 56 (assume first digit(s) are feet, last 1-2 are inches if reasonable)
+    ];
+    
+    for (const pattern of feetInchesPatterns) {
+      const match = str.match(pattern);
+      if (match) {
+        const feet = parseInt(match[1]);
+        const inches = parseInt(match[2]);
+        
+        // Validate inches (must be 0-11 for the last pattern)
+        if (pattern === feetInchesPatterns[2] && inches > 11 && feet < 10) {
+          // If inches > 11 and feet is single digit, treat whole thing as inches
+          continue;
+        }
+        
+        return feet * 12 + Math.min(inches, 11); // Cap inches at 11
+      }
+    }
+    
+    // Handle feet only (e.g., "5ft", "5'", "5 feet")
+    const feetOnlyMatch = str.match(/^(\d+)\s*(?:ft|feet|')$/);
+    if (feetOnlyMatch) {
+      const feet = parseInt(feetOnlyMatch[1]);
+      return feet * 12;
+    }
+    
+    // Handle inches only (e.g., "72", "72in", "72\"", "72 inches")
+    const inchesOnlyMatch = str.match(/^(\d+(?:\.\d+)?)\s*(?:in|inches|")?$/);
+    if (inchesOnlyMatch) {
+      return parseFloat(inchesOnlyMatch[1]);
+    }
+    
+    // If no pattern matches, try to parse as a number (assume inches)
+    const numericValue = parseFloat(str);
+    return isNaN(numericValue) ? 0 : Math.max(0, numericValue);
+  };
+
+  // Convert pixels to a user-friendly input format
+  const pixelsToInputFormat = (pixels) => {
+    const { feet, inches } = pixelsToFeetInches(pixels);
+    if (feet === 0) {
+      return `${inches}`;
     } else if (inches === 0) {
       return `${feet}'`;
     } else {
-      return `${feet}'-${inches}"`;
+      return `${feet}'${inches}`;
     }
   };
 
@@ -37,14 +104,14 @@ function PropertiesPanel() {
   // Update properties when selected element changes
   useEffect(() => {
     if (state.selectedElement) {
-      // Convert pixel measurements to inches for display in input fields
-      const widthInInches = Math.round((state.selectedElement.width || 24) / 4); // 4 pixels = 1 inch
-      const heightInInches = Math.round((state.selectedElement.height || 48) / 4);
+      // Convert pixel measurements to user-friendly input format
+      const widthInputFormat = pixelsToInputFormat(state.selectedElement.width || 240); // Default 1 foot
+      const heightInputFormat = pixelsToInputFormat(state.selectedElement.height || 240); // Default 1 foot
       
       setProperties({
         type: state.selectedElement.type || 'Wall',
-        width: widthInInches.toString(),
-        height: heightInInches.toString(),
+        width: widthInputFormat,
+        height: heightInputFormat,
         material: state.selectedElement.material || 'Steel',
         gauge: state.selectedElement.gauge || '14',
         color: state.selectedElement.color || '#888888',
@@ -81,9 +148,11 @@ function PropertiesPanel() {
 
   const applyChanges = () => {
     if (state.selectedElement) {
-      // Convert inches input back to pixels for storage (4 pixels = 1 inch)
-      const widthInPixels = (parseFloat(properties.width) || 0) * 4;
-      const heightInPixels = (parseFloat(properties.height) || 0) * 4;
+      // Parse flexible input formats and convert to pixels (20 pixels = 1 inch)
+      const widthInInches = parseInputToInches(properties.width);
+      const heightInInches = parseInputToInches(properties.height);
+      const widthInPixels = widthInInches * 20;
+      const heightInPixels = heightInInches * 20;
       
       const updates = {
         type: properties.type,
@@ -171,23 +240,38 @@ function PropertiesPanel() {
                 <h3 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Dimensions</h3>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-xs text-gray-600 mb-1">Width (in)</label>
+                    <label className="block text-xs text-gray-600 mb-1">Width</label>
                     <input
-                      type="number"
+                      type="text"
                       value={properties.width}
                       onChange={(e) => handlePropertyChange('width', e.target.value)}
+                      placeholder="5'6 or 5.5' or 66"
                       className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                     />
+                    {properties.width && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        = {formatFeetInches(parseInputToInches(properties.width) * 20)}
+                      </div>
+                    )}
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-600 mb-1">Height (in)</label>
+                    <label className="block text-xs text-gray-600 mb-1">Height</label>
                     <input
-                      type="number"
+                      type="text"
                       value={properties.height}
                       onChange={(e) => handlePropertyChange('height', e.target.value)}
+                      placeholder="8' or 96 or 8'0"
                       className="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                     />
+                    {properties.height && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        = {formatFeetInches(parseInputToInches(properties.height) * 20)}
+                      </div>
+                    )}
                   </div>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Formats: 5'6", 5.5', 66in, 5ft6, etc.
                 </div>
               </div>
             )}

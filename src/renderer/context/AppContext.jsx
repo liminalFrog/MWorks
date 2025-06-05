@@ -184,6 +184,7 @@ function appReducer(state, action) {
       };
       
     case ACTIONS.TOGGLE_GRID:
+      console.log('TOGGLING GRID from', state.showGrid, 'to', !state.showGrid);
       return {
         ...state,
         showGrid: !state.showGrid,
@@ -486,8 +487,9 @@ export function AppProvider({ children }) {
     }, []),
     
     toggleGrid: useCallback(() => {
+      console.log('TOGGLE GRID CALLED - current state:', state.showGrid);
       dispatch({ type: ACTIONS.TOGGLE_GRID });
-    }, []),
+    }, [state.showGrid]),
     
     // Project actions
     setProjectName: useCallback((name) => {
@@ -567,6 +569,10 @@ export function AppProvider({ children }) {
     }, []),
     
     // Multi-selection actions
+    setSelectedElements: useCallback((elementIds) => {
+      dispatch({ type: ACTIONS.SELECT_MULTIPLE_ELEMENTS, payload: elementIds });
+    }, []),
+    
     selectMultipleElements: useCallback((elements) => {
       dispatch({ type: ACTIONS.SELECT_MULTIPLE_ELEMENTS, payload: elements });
     }, []),
